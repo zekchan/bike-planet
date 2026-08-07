@@ -1,6 +1,6 @@
-type Point = { distance: number; elevation: number };
+import type { ProfilePoint } from "../planner-types";
 
-export function ElevationProfile({ points }: { points: Point[] }) {
+export function ElevationProfile({ points }: { points: ProfilePoint[] }) {
   const width = 420;
   const height = 110;
   const padding = 5;

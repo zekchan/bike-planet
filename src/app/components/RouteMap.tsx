@@ -9,7 +9,7 @@ import {
   type StyleSpecification,
 } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import type { Point, RouteOption } from "@/app/page";
+import type { Point, RouteOption } from "../planner-types";
 
 type Props = {
   start: Point | null;
