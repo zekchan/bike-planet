@@ -31,7 +31,7 @@ type LoopSeed = {
 };
 
 const valhallaUrl = process.env.VALHALLA_URL ?? "http://localhost:8002";
-const elevationSmoothingWeights = [1, 2, 3, 2, 1] as const;
+const elevationSmoothingWeights = [1, 2, 1] as const;
 const ascentNoiseThresholdMeters = 3;
 
 function decodePolyline6(encoded: string): [number, number][] {
@@ -112,19 +112,48 @@ async function requestJson<T>(path: string, body: unknown, timeoutMs = 45_000): 
 }
 
 function smoothElevationProfile(profile: ProfilePoint[]) {
+  const smoothingRadius = Math.floor(elevationSmoothingWeights.length / 2);
   return profile.map((point, index) => {
     if (index === 0 || index === profile.length - 1) return point;
     let weightedElevation = 0;
     let totalWeight = 0;
-    for (let offset = -2; offset <= 2; offset += 1) {
+    for (let offset = -smoothingRadius; offset <= smoothingRadius; offset += 1) {
       const neighbor = profile[index + offset];
       if (!neighbor) continue;
-      const weight = elevationSmoothingWeights[offset + 2];
+      const weight = elevationSmoothingWeights[offset + smoothingRadius];
       weightedElevation += neighbor.elevation * weight;
       totalWeight += weight;
     }
     return { ...point, elevation: weightedElevation / totalWeight };
   });
+}
+
+function totalAscent(profile: ProfilePoint[]) {
+  let ascent = 0;
+  let valley = profile[0].elevation;
+  let peak = valley;
+  let climbing = false;
+
+  for (let index = 1; index < profile.length; index += 1) {
+    const elevation = profile[index].elevation;
+    if (!climbing) {
+      if (elevation < valley) valley = elevation;
+      if (elevation - valley >= ascentNoiseThresholdMeters) {
+        climbing = true;
+        peak = elevation;
+      }
+    } else if (elevation > peak) {
+      peak = elevation;
+    } else if (peak - elevation >= ascentNoiseThresholdMeters) {
+      ascent += peak - valley;
+      valley = elevation;
+      peak = elevation;
+      climbing = false;
+    }
+  }
+
+  if (climbing) ascent += peak - valley;
+  return ascent;
 }
 
 function elevationMetrics(rawProfile: ProfilePoint[], preferredGradient: number) {
@@ -139,10 +168,9 @@ function elevationMetrics(rawProfile: ProfilePoint[], preferredGradient: number)
       steepPenalty: 0,
     };
   }
-  let ascentMeters = 0;
+  const ascentMeters = totalAscent(profile);
   let steepDistanceMeters = 0;
   let steepPenalty = 0;
-  let ascentAnchor = profile[0].elevation;
   const positiveGradients: number[] = [];
 
   for (let index = 1; index < profile.length; index += 1) {
@@ -150,11 +178,6 @@ function elevationMetrics(rawProfile: ProfilePoint[], preferredGradient: number)
     const rise = profile[index].elevation - profile[index - 1].elevation;
     if (distance <= 0) continue;
     const gradient = (rise / distance) * 100;
-    const ascentDelta = profile[index].elevation - ascentAnchor;
-    if (Math.abs(ascentDelta) >= ascentNoiseThresholdMeters) {
-      if (ascentDelta > 0) ascentMeters += ascentDelta;
-      ascentAnchor = profile[index].elevation;
-    }
     if (gradient > 0) positiveGradients.push(gradient);
     if (gradient > preferredGradient) {
       steepDistanceMeters += distance;
