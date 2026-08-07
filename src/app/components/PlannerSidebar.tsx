@@ -1,13 +1,16 @@
-import type { Mode, Point, RecommendedRoutes, RouteOption } from "../planner-types";
+import type { Mode, Point, RecommendedRoutes, RouteKind, RouteOption } from "../planner-types";
 import { ModeSelector } from "./ModeSelector";
 import { PointSelector } from "./PointSelector";
+import { RouteKindSelector } from "./RouteKindSelector";
 import { RouteResults } from "./RouteResults";
 import { RouteSettings } from "./RouteSettings";
 
 type Props = {
   start: Point | null;
   end: Point | null;
+  routeKind: RouteKind;
   mode: Mode;
+  targetDistanceKm: number;
   maxDetour: number;
   preferredGradient: number;
   routes: RouteOption[];
@@ -16,7 +19,9 @@ type Props = {
   loading: boolean;
   error: string | null;
   onReset: () => void;
+  onRouteKindChange: (routeKind: RouteKind) => void;
   onModeChange: (mode: Mode) => void;
+  onTargetDistanceChange: (value: number) => void;
   onMaxDetourChange: (value: number) => void;
   onPreferredGradientChange: (value: number) => void;
   onSelectRoute: (id: string) => void;
@@ -37,11 +42,15 @@ export function PlannerSidebar(props: Props) {
         )}
       </header>
 
-      <PointSelector start={props.start} end={props.end} />
+      <RouteKindSelector routeKind={props.routeKind} onChange={props.onRouteKindChange} />
+      <PointSelector start={props.start} end={props.end} routeKind={props.routeKind} />
       <ModeSelector mode={props.mode} onChange={props.onModeChange} />
       <RouteSettings
+        isLoop={props.routeKind === "loop"}
+        targetDistanceKm={props.targetDistanceKm}
         maxDetour={props.maxDetour}
         preferredGradient={props.preferredGradient}
+        onTargetDistanceChange={props.onTargetDistanceChange}
         onMaxDetourChange={props.onMaxDetourChange}
         onPreferredGradientChange={props.onPreferredGradientChange}
       />
@@ -55,6 +64,7 @@ export function PlannerSidebar(props: Props) {
           selectedRoute={props.selectedRoute}
           recommended={props.recommended}
           mode={props.mode}
+          routeKind={props.routeKind}
           onSelectRoute={props.onSelectRoute}
         />
       )}

@@ -24,6 +24,8 @@ export type RouteOption = {
 
 export type Mode = "direct" | "balanced" | "flattest";
 
+export type RouteKind = "point-to-point" | "loop";
+
 export type RecommendedRoutes = Record<Mode, string>;
 
 export type RoutesResponse = {

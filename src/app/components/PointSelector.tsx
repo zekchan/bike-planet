@@ -1,10 +1,17 @@
-import type { Point } from "../planner-types";
+import type { Point, RouteKind } from "../planner-types";
 
 function pointCoordinates(point: Point | null, fallback: string) {
   return point ? `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}` : fallback;
 }
 
-export function PointSelector({ start, end }: { start: Point | null; end: Point | null }) {
+type Props = {
+  start: Point | null;
+  end: Point | null;
+  routeKind: RouteKind;
+};
+
+export function PointSelector({ start, end, routeKind }: Props) {
+  const isLoop = routeKind === "loop";
   return (
     <section className="point-card">
       <div className="point-row">
@@ -18,8 +25,12 @@ export function PointSelector({ start, end }: { start: Point | null; end: Point 
       <div className="point-row">
         <span className="point-dot point-b">B</span>
         <div>
-          <strong>{end ? "Финиш выбран" : "Выберите финиш"}</strong>
-          <small>{pointCoordinates(end, "Второй клик по карте")}</small>
+          <strong>{isLoop ? "Возврат в точку A" : end ? "Финиш выбран" : "Выберите финиш"}</strong>
+          <small>
+            {isLoop
+              ? pointCoordinates(start, "Сначала выберите старт")
+              : pointCoordinates(end, "Второй клик по карте")}
+          </small>
         </div>
       </div>
     </section>

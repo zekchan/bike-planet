@@ -24,6 +24,12 @@ type ValhallaTrip = {
   legs: { shape: string }[];
 };
 
+type LoopSeed = {
+  bearing: number;
+  clockwise: boolean;
+  useHills: number;
+};
+
 const valhallaUrl = process.env.VALHALLA_URL ?? "http://localhost:8002";
 
 function decodePolyline6(encoded: string): [number, number][] {
@@ -56,13 +62,45 @@ function decodePolyline6(encoded: string): [number, number][] {
   return coordinates;
 }
 
-async function requestJson<T>(path: string, body: unknown): Promise<T> {
+function encodePolyline6(coordinates: [number, number][]) {
+  let previousLat = 0;
+  let previousLon = 0;
+  let encoded = "";
+
+  const encodeValue = (value: number) => {
+    let shifted = value < 0 ? ~(value << 1) : value << 1;
+    while (shifted >= 0x20) {
+      encoded += String.fromCharCode((0x20 | (shifted & 0x1f)) + 63);
+      shifted >>= 5;
+    }
+    encoded += String.fromCharCode(shifted + 63);
+  };
+
+  for (const [lon, lat] of coordinates) {
+    const nextLat = Math.round(lat * 1e6);
+    const nextLon = Math.round(lon * 1e6);
+    encodeValue(nextLat - previousLat);
+    encodeValue(nextLon - previousLon);
+    previousLat = nextLat;
+    previousLon = nextLon;
+  }
+  return encoded;
+}
+
+function tripCoordinates(trip: ValhallaTrip) {
+  return trip.legs.flatMap((leg, index) => {
+    const coordinates = decodePolyline6(leg.shape);
+    return index === 0 ? coordinates : coordinates.slice(1);
+  });
+}
+
+async function requestJson<T>(path: string, body: unknown, timeoutMs = 45_000): Promise<T> {
   const response = await fetch(`${valhallaUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -116,16 +154,21 @@ async function enrichTrip(
   trip: ValhallaTrip,
   preferredGradient: number,
 ): Promise<Candidate> {
-  const encodedShape = trip.legs[0].shape;
+  const coordinates = tripCoordinates(trip);
+  const encodedShape = encodePolyline6(coordinates);
   let profile: ProfilePoint[] = [];
   try {
-    const elevation = await requestJson<{ range_height?: [number, number | null][] }>("/height", {
-      range: true,
-      encoded_polyline: encodedShape,
-      shape_format: "polyline6",
-      resample_distance: 75,
-      height_precision: 1,
-    });
+    const elevation = await requestJson<{ range_height?: [number, number | null][] }>(
+      "/height",
+      {
+        range: true,
+        encoded_polyline: encodedShape,
+        shape_format: "polyline6",
+        resample_distance: 75,
+        height_precision: 1,
+      },
+      6_000,
+    );
     profile = (elevation.range_height ?? [])
       .filter((point): point is [number, number] => point[1] !== null)
       .map(([distance, elevationValue]) => ({ distance, elevation: elevationValue }));
@@ -138,13 +181,108 @@ async function enrichTrip(
     id,
     name,
     encodedShape,
-    coordinates: decodePolyline6(encodedShape),
+    coordinates,
     distanceMeters: trip.summary.length * 1000,
     durationSeconds: trip.summary.time,
     detourPercent: 0,
     profile,
     ...metrics,
   };
+}
+
+function destinationPoint(origin: Point, distanceKm: number, bearingDegrees: number): Point {
+  const earthRadiusKm = 6371;
+  const angularDistance = distanceKm / earthRadiusKm;
+  const bearing = (bearingDegrees * Math.PI) / 180;
+  const lat = (origin.lat * Math.PI) / 180;
+  const lon = (origin.lon * Math.PI) / 180;
+  const destinationLat = Math.asin(
+    Math.sin(lat) * Math.cos(angularDistance) + Math.cos(lat) * Math.sin(angularDistance) * Math.cos(bearing),
+  );
+  const destinationLon =
+    lon +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat),
+      Math.cos(angularDistance) - Math.sin(lat) * Math.sin(destinationLat),
+    );
+  return {
+    lat: (destinationLat * 180) / Math.PI,
+    lon: (destinationLon * 180) / Math.PI,
+  };
+}
+
+function loopLocations(start: Point, targetDistanceKm: number, seed: LoopSeed, scale = 1) {
+  const sideKm = (targetDistanceKm / 3) * 0.55 * scale;
+  const turn = seed.clockwise ? 60 : -60;
+  return [
+    start,
+    destinationPoint(start, sideKm, seed.bearing),
+    destinationPoint(start, sideKm, seed.bearing + turn),
+    start,
+  ];
+}
+
+async function requestLoopTrip(locations: Point[], useHills: number) {
+  const route = await requestJson<{ trip: ValhallaTrip }>(
+    "/route",
+    {
+      locations,
+      costing: "bicycle",
+      costing_options: {
+        bicycle: {
+          bicycle_type: "hybrid",
+          use_hills: useHills,
+          use_roads: 0,
+          exclude_highways: true,
+        },
+      },
+      directions_options: { units: "kilometers" },
+    },
+    5_000,
+  );
+  return route.trip;
+}
+
+async function buildLoopCandidates(start: Point, targetDistanceKm: number, preferredGradient: number) {
+  const hillPreferences = [0.65, 0.25, 0];
+  const seeds: LoopSeed[] = [0, 60, 120, 180, 240, 300].map((bearing, index) => ({
+    bearing,
+    clockwise: index % 2 === 0,
+    useHills: hillPreferences[index % hillPreferences.length],
+  }));
+  const roughRoutes = await Promise.all(
+    seeds.map(async (seed) => {
+      try {
+        return {
+          seed,
+          trip: await requestLoopTrip(loopLocations(start, targetDistanceKm, seed), seed.useHills),
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const availableRoutes = roughRoutes
+    .filter((route) => route !== null)
+    .sort(
+      (left, right) =>
+        Math.abs(left.trip.summary.length - targetDistanceKm) -
+        Math.abs(right.trip.summary.length - targetDistanceKm),
+    )
+    .slice(0, 4);
+  const refinedRoutes = await Promise.all(
+    availableRoutes.map(async ({ seed, trip }) => {
+      const scale = Math.min(1.65, Math.max(0.55, targetDistanceKm / trip.summary.length));
+      try {
+        return await requestLoopTrip(loopLocations(start, targetDistanceKm, seed, scale), seed.useHills);
+      } catch {
+        return trip;
+      }
+    }),
+  );
+  return Promise.all(
+    refinedRoutes.map((trip, index) => enrichTrip(`loop-${index}`, "Loop", trip, preferredGradient)),
+  );
 }
 
 async function buildCandidates(
@@ -160,7 +298,12 @@ async function buildCandidates(
     costing: "bicycle",
     alternates: 2,
     costing_options: {
-      bicycle: { bicycle_type: "hybrid", use_hills: useHills, use_roads: 0.2 },
+      bicycle: {
+        bicycle_type: "hybrid",
+        use_hills: useHills,
+        use_roads: 0,
+        exclude_highways: true,
+      },
     },
     directions_options: { units: "kilometers" },
   });
@@ -187,17 +330,22 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { start, end } = body;
+    const routeKind = body.routeKind === "loop" ? "loop" : "point-to-point";
     const maxDetour = Math.min(100, Math.max(0, Number(body.maxDetour) || 30));
     const preferredGradient = Math.min(25, Math.max(1, Number(body.preferredGradient) || 8));
-    if (!isPoint(start) || !isPoint(end)) {
+    const targetDistanceKm = Math.min(100, Math.max(5, Number(body.targetDistanceKm) || 20));
+    if (!isPoint(start) || (routeKind === "point-to-point" && !isPoint(end))) {
       return NextResponse.json({ error: "Некорректные координаты точек" }, { status: 400 });
     }
 
-    const requests = [
-      buildCandidates("direct", "Direct", 0.65, start, end, preferredGradient),
-      buildCandidates("balanced", "Balanced", 0.25, start, end, preferredGradient),
-      buildCandidates("flattest", "Flattest", 0, start, end, preferredGradient),
-    ];
+    const requests =
+      routeKind === "loop"
+        ? [buildLoopCandidates(start, targetDistanceKm, preferredGradient)]
+        : [
+            buildCandidates("direct", "Direct", 0.65, start, end, preferredGradient),
+            buildCandidates("balanced", "Balanced", 0.25, start, end, preferredGradient),
+            buildCandidates("flattest", "Flattest", 0, start, end, preferredGradient),
+          ];
     const settled = await Promise.allSettled(requests);
     const candidates = settled
       .filter((result): result is PromiseFulfilledResult<Candidate[]> => result.status === "fulfilled")
@@ -216,24 +364,41 @@ export async function POST(request: Request) {
       );
     }
 
+    const targetDistanceMeters = targetDistanceKm * 1000;
     const shortestDistance = Math.min(...candidates.map((candidate) => candidate.distanceMeters));
     candidates.forEach((candidate) => {
-      candidate.detourPercent = ((candidate.distanceMeters - shortestDistance) / shortestDistance) * 100;
+      candidate.detourPercent =
+        routeKind === "loop"
+          ? ((candidate.distanceMeters - targetDistanceMeters) / targetDistanceMeters) * 100
+          : ((candidate.distanceMeters - shortestDistance) / shortestDistance) * 100;
     });
 
     const byScore = (score: (candidate: Candidate) => number, pool = candidates) =>
       [...pool].sort((a, b) => score(a) - score(b))[0];
-    const allowed = candidates.filter((candidate) => candidate.detourPercent <= maxDetour + 0.01);
+    const allowed = candidates.filter((candidate) =>
+      routeKind === "loop"
+        ? Math.abs(candidate.detourPercent) <= 15
+        : candidate.detourPercent <= maxDetour + 0.01,
+    );
     const elevationAware = (candidate: Candidate, ascentWeight: number, steepWeight: number) =>
       candidate.distanceMeters +
       (candidate.ascentMeters ?? 0) * ascentWeight +
       candidate.steepPenalty * steepWeight;
 
-    const direct = byScore((candidate) => candidate.distanceMeters);
-    const balanced = byScore((candidate) => elevationAware(candidate, 7, 0.02));
+    const distanceError = (candidate: Candidate) => Math.abs(candidate.distanceMeters - targetDistanceMeters);
+    const direct = byScore((candidate) =>
+      routeKind === "loop" ? distanceError(candidate) : candidate.distanceMeters,
+    );
+    const balanced = byScore((candidate) =>
+      routeKind === "loop"
+        ? distanceError(candidate) * 2 + (candidate.ascentMeters ?? 0) * 7 + candidate.steepPenalty * 0.02
+        : elevationAware(candidate, 7, 0.02),
+    );
     const flattest = byScore(
       (candidate) =>
-        (candidate.ascentMeters ?? 0) * 100 + candidate.steepPenalty * 0.2 + candidate.distanceMeters * 0.05,
+        (candidate.ascentMeters ?? 0) * 100 +
+        candidate.steepPenalty * 0.2 +
+        (routeKind === "loop" ? distanceError(candidate) * 0.2 : candidate.distanceMeters * 0.05),
       allowed.length ? allowed : candidates,
     );
     const recommended = {
@@ -258,7 +423,9 @@ export async function POST(request: Request) {
         ...candidate,
         name:
           candidate.id === direct.id
-            ? "Direct"
+            ? routeKind === "loop"
+              ? "Closest"
+              : "Direct"
             : candidate.id === balanced.id
               ? "Balanced"
               : candidate.id === flattest.id

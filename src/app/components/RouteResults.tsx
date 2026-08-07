@@ -1,4 +1,4 @@
-import type { Mode, RecommendedRoutes, RouteOption } from "../planner-types";
+import type { Mode, RecommendedRoutes, RouteKind, RouteOption } from "../planner-types";
 import { formatDistance, formatDuration } from "../planner-utils";
 import { ElevationProfile } from "./ElevationProfile";
 
@@ -7,10 +7,11 @@ type Props = {
   selectedRoute?: RouteOption;
   recommended: RecommendedRoutes | null;
   mode: Mode;
+  routeKind: RouteKind;
   onSelectRoute: (id: string) => void;
 };
 
-export function RouteResults({ routes, selectedRoute, recommended, mode, onSelectRoute }: Props) {
+export function RouteResults({ routes, selectedRoute, recommended, mode, routeKind, onSelectRoute }: Props) {
   if (!routes.length) return null;
 
   return (
@@ -52,7 +53,11 @@ export function RouteResults({ routes, selectedRoute, recommended, mode, onSelec
                 </span>
               </div>
               <div className="detour-row">
-                <span>Крюк {route.detourPercent.toFixed(0)}%</span>
+                <span>
+                  {routeKind === "loop"
+                    ? `От цели ${route.detourPercent >= 0 ? "+" : ""}${route.detourPercent.toFixed(0)}%`
+                    : `Крюк ${route.detourPercent.toFixed(0)}%`}
+                </span>
                 {route.steepDistanceMeters > 0 && (
                   <span>круто: {formatDistance(route.steepDistanceMeters)}</span>
                 )}

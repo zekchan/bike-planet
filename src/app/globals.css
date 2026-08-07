@@ -130,10 +130,19 @@ h1 {
   background: var(--line);
 }
 
-.mode-grid {
+.mode-grid,
+.route-kind-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+}
+.mode-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+.route-kind-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+.route-kind-section {
+  margin-top: 24px;
 }
 .mode-button {
   padding: 10px 6px;

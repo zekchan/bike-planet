@@ -12,7 +12,9 @@ export function BikePlanner() {
       <PlannerSidebar
         start={planner.start}
         end={planner.end}
+        routeKind={planner.routeKind}
         mode={planner.mode}
+        targetDistanceKm={planner.targetDistanceKm}
         maxDetour={planner.maxDetour}
         preferredGradient={planner.preferredGradient}
         routes={planner.routes}
@@ -21,7 +23,9 @@ export function BikePlanner() {
         loading={planner.loading}
         error={planner.error}
         onReset={planner.reset}
+        onRouteKindChange={planner.changeRouteKind}
         onModeChange={planner.setMode}
+        onTargetDistanceChange={planner.setTargetDistanceKm}
         onMaxDetourChange={planner.setMaxDetour}
         onPreferredGradientChange={planner.setPreferredGradient}
         onSelectRoute={planner.setSelectedId}
@@ -37,7 +41,9 @@ export function BikePlanner() {
           onSelectRoute={planner.setSelectedId}
         />
         {!planner.start && <div className="map-hint">Нажмите на карту, чтобы поставить точку A</div>}
-        {planner.start && !planner.end && <div className="map-hint">Теперь поставьте точку B</div>}
+        {planner.routeKind === "point-to-point" && planner.start && !planner.end && (
+          <div className="map-hint">Теперь поставьте точку B</div>
+        )}
       </section>
     </main>
   );
