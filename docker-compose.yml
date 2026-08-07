@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      VALHALLA_URL: http://valhalla:8002
+    depends_on:
+      - valhalla
+    restart: unless-stopped
+
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    ports:
+      - "8002:8002"
+    volumes:
+      - valhalla-data:/custom_files
+    environment:
+      tile_urls: ${OSM_PBF_URL:-https://download.geofabrik.de/europe/portugal-latest.osm.pbf}
+      build_elevation: "True"
+      build_admins: "True"
+      build_time_zones: "True"
+      server_threads: ${VALHALLA_THREADS:-4}
+    restart: unless-stopped
+
+volumes:
+  valhalla-data:

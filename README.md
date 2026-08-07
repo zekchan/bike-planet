@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bike Planet
 
-## Getting Started
+Минимальный планировщик велосипедных маршрутов с учётом рельефа. Пользователь ставит точки A и B на карте, а приложение сравнивает несколько маршрутов Valhalla по расстоянию, набору высоты и уклонам.
 
-First, run the development server:
+## Что есть в MVP
+
+- карта OpenStreetMap на MapLibre;
+- режимы Direct, Balanced и Flattest;
+- ограничение максимального крюка для Flattest (30% по умолчанию);
+- штраф за участки круче выбранного комфортного уклона;
+- 2–3 варианта на карте, расстояние, время, набор высоты, максимальный и типичный уклон;
+- профиль высоты выбранного маршрута;
+- Next.js/TypeScript/Tailwind и self-hosted Valhalla в Docker Compose.
+
+## Запуск
+
+Нужны Docker и Docker Compose.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте [http://localhost:3000](http://localhost:3000). При первом запуске Valhalla скачивает OSM-данные Португалии, строит граф и загружает высоты — маршруты начнут строиться после завершения этой подготовки. Прогресс виден так:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+docker compose logs -f valhalla
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Чтобы использовать другой регион, скопируйте `.env.example` в `.env` и замените `OSM_PBF_URL` на URL нужного `.osm.pbf`-экстракта Geofabrik. После смены региона потребуется пересоздать том данных Valhalla.
 
-## Learn More
+## Разработка интерфейса без контейнера приложения
 
-To learn more about Next.js, take a look at the following resources:
+Valhalla можно оставить в Docker, а Next.js запустить локально:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+docker compose up valhalla
+npm install
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Локальный backend по умолчанию обращается к Valhalla на `http://localhost:8002`.
 
-## Deploy on Vercel
+## Как выбирается маршрут
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Backend запрашивает велосипедные маршруты с разной чувствительностью к холмам (`use_hills`), получает профиль через Valhalla `/height`, затем пересчитывает метрики на равномерных 75-метровых сегментах. Direct выбирает кратчайший вариант, Balanced учитывает расстояние, набор и крутые участки, Flattest выбирает минимально сложный по рельефу маршрут только среди вариантов, укладывающихся в заданный максимальный крюк.
