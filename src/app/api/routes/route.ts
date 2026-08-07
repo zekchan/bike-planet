@@ -31,6 +31,8 @@ type LoopSeed = {
 };
 
 const valhallaUrl = process.env.VALHALLA_URL ?? "http://localhost:8002";
+const elevationSmoothingWeights = [1, 2, 3, 2, 1] as const;
+const ascentNoiseThresholdMeters = 3;
 
 function decodePolyline6(encoded: string): [number, number][] {
   let index = 0;
@@ -109,9 +111,27 @@ async function requestJson<T>(path: string, body: unknown, timeoutMs = 45_000): 
   return response.json() as Promise<T>;
 }
 
-function elevationMetrics(profile: ProfilePoint[], preferredGradient: number) {
+function smoothElevationProfile(profile: ProfilePoint[]) {
+  return profile.map((point, index) => {
+    if (index === 0 || index === profile.length - 1) return point;
+    let weightedElevation = 0;
+    let totalWeight = 0;
+    for (let offset = -2; offset <= 2; offset += 1) {
+      const neighbor = profile[index + offset];
+      if (!neighbor) continue;
+      const weight = elevationSmoothingWeights[offset + 2];
+      weightedElevation += neighbor.elevation * weight;
+      totalWeight += weight;
+    }
+    return { ...point, elevation: weightedElevation / totalWeight };
+  });
+}
+
+function elevationMetrics(rawProfile: ProfilePoint[], preferredGradient: number) {
+  const profile = smoothElevationProfile(rawProfile);
   if (profile.length < 2) {
     return {
+      profile,
       ascentMeters: null,
       maxGradient: null,
       typicalGradient: null,
@@ -122,6 +142,7 @@ function elevationMetrics(profile: ProfilePoint[], preferredGradient: number) {
   let ascentMeters = 0;
   let steepDistanceMeters = 0;
   let steepPenalty = 0;
+  let ascentAnchor = profile[0].elevation;
   const positiveGradients: number[] = [];
 
   for (let index = 1; index < profile.length; index += 1) {
@@ -129,7 +150,11 @@ function elevationMetrics(profile: ProfilePoint[], preferredGradient: number) {
     const rise = profile[index].elevation - profile[index - 1].elevation;
     if (distance <= 0) continue;
     const gradient = (rise / distance) * 100;
-    if (rise > 0.7) ascentMeters += rise;
+    const ascentDelta = profile[index].elevation - ascentAnchor;
+    if (Math.abs(ascentDelta) >= ascentNoiseThresholdMeters) {
+      if (ascentDelta > 0) ascentMeters += ascentDelta;
+      ascentAnchor = profile[index].elevation;
+    }
     if (gradient > 0) positiveGradients.push(gradient);
     if (gradient > preferredGradient) {
       steepDistanceMeters += distance;
@@ -140,6 +165,7 @@ function elevationMetrics(profile: ProfilePoint[], preferredGradient: number) {
   positiveGradients.sort((a, b) => a - b);
   const typicalIndex = Math.floor((positiveGradients.length - 1) * 0.75);
   return {
+    profile,
     ascentMeters,
     maxGradient: positiveGradients.at(-1) ?? 0,
     typicalGradient: positiveGradients.length ? positiveGradients[Math.max(0, typicalIndex)] : 0,
@@ -185,7 +211,6 @@ async function enrichTrip(
     distanceMeters: trip.summary.length * 1000,
     durationSeconds: trip.summary.time,
     detourPercent: 0,
-    profile,
     ...metrics,
   };
 }
