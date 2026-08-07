@@ -44,28 +44,6 @@ const mapStyle: StyleSpecification = {
   layers: [
     { id: "osm", type: "raster", source: "osm" },
     {
-      id: "route-lines-casing",
-      type: "line",
-      source: "routes",
-      layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "selected"] },
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": ["case", ["==", ["get", "selected"], 1], 9, 7],
-        "line-opacity": ["case", ["==", ["get", "selected"], 1], 0.9, 0.65],
-      },
-    },
-    {
-      id: "route-lines",
-      type: "line",
-      source: "routes",
-      layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "selected"] },
-      paint: {
-        "line-color": ["get", "color"],
-        "line-width": ["case", ["==", ["get", "selected"], 1], 6, 4],
-        "line-opacity": ["case", ["==", ["get", "selected"], 1], 1, 0.6],
-      },
-    },
-    {
       id: "route-lines-hit",
       type: "line",
       source: "routes",
@@ -99,6 +77,7 @@ function routeData(routes: RouteOption[], selectedId: string | null) {
 export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectRoute }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const routeOverlayRef = useRef<SVGSVGElement | null>(null);
   const markersRef = useRef<Marker[]>([]);
   const clickHandlerRef = useRef(onMapClick);
   const selectHandlerRef = useRef(onSelectRoute);
@@ -120,6 +99,11 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
       attributionControl: { compact: true },
     });
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    const routeOverlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    routeOverlay.classList.add("route-overlay");
+    routeOverlay.setAttribute("aria-hidden", "true");
+    containerRef.current.append(routeOverlay);
+    routeOverlayRef.current = routeOverlay;
     map.on("click", "route-lines-hit", (event) => {
       const id = event.features?.[0]?.properties?.id;
       if (id) selectHandlerRef.current(id);
@@ -139,6 +123,8 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
     });
     mapRef.current = map;
     return () => {
+      routeOverlay.remove();
+      routeOverlayRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -177,6 +163,54 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
     map.on("style.load", update);
     return () => {
       map.off("style.load", update);
+    };
+  }, [routes, selectedId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const overlay = routeOverlayRef.current;
+    if (!map || !overlay) return;
+
+    const orderedRoutes = [...routes].sort(
+      (left, right) => Number(left.id === selectedId) - Number(right.id === selectedId),
+    );
+    const paths = orderedRoutes.map((route) => {
+      const selected = route.id === selectedId;
+      const casing = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      casing.setAttribute("class", "route-overlay-casing");
+      casing.setAttribute("stroke-width", selected ? "9" : "7");
+      casing.setAttribute("opacity", selected ? "0.9" : "0.65");
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      line.setAttribute("class", "route-overlay-line");
+      line.setAttribute("stroke", colors[routes.indexOf(route) % colors.length]);
+      line.setAttribute("stroke-width", selected ? "6" : "4");
+      line.setAttribute("opacity", selected ? "1" : "0.6");
+
+      overlay.append(casing, line);
+      return { route, casing, line };
+    });
+
+    const draw = () => {
+      for (const { route, casing, line } of paths) {
+        const path = route.coordinates
+          .map(([lon, lat], index) => {
+            const point = map.project([lon, lat]);
+            return `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+          })
+          .join(" ");
+        casing.setAttribute("d", path);
+        line.setAttribute("d", path);
+      }
+    };
+
+    draw();
+    map.on("move", draw);
+    map.on("resize", draw);
+    return () => {
+      map.off("move", draw);
+      map.off("resize", draw);
+      overlay.replaceChildren();
     };
   }, [routes, selectedId]);
 
