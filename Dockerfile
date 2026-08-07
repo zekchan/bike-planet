@@ -1,17 +1,19 @@
-FROM node:22-alpine AS deps
-WORKDIR /app
+FROM node:26-alpine AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
+RUN npm install --global corepack@0.35.0 && corepack enable
+
+FROM base AS deps
+WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-FROM node:22-alpine AS builder
+FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN corepack enable && pnpm build
+RUN pnpm build
 
-FROM node:22-alpine AS runner
+FROM node:26-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
