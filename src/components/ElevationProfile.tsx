@@ -11,14 +11,20 @@ export function ElevationProfile({ points }: { points: Point[] }) {
   const path = points
     .map((point, index) => {
       const x = padding + (point.distance / maxDistance) * (width - padding * 2);
-      const y = height - padding - ((point.elevation - minElevation) / elevationRange) * (height - padding * 2);
+      const y =
+        height - padding - ((point.elevation - minElevation) / elevationRange) * (height - padding * 2);
       return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
   const area = `${path} L${width - padding},${height - padding} L${padding},${height - padding} Z`;
 
   return (
-    <svg className="profile-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Профиль высоты маршрута">
+    <svg
+      className="profile-chart"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="Профиль высоты маршрута"
+    >
       <defs>
         <linearGradient id="profile-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#0f766e" stopOpacity="0.35" />

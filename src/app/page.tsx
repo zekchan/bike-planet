@@ -82,7 +82,7 @@ export default function Home() {
     if (!start || !end) return;
     const timeout = window.setTimeout(buildRoutes, 350);
     return () => window.clearTimeout(timeout);
-  }, [start, end, maxDetour, preferredGradient, buildRoutes]);
+  }, [start, end, buildRoutes]);
 
   const selectedRoute = useMemo(
     () => routes.find((route) => route.id === selectedId) ?? routes[0],
@@ -121,7 +121,9 @@ export default function Home() {
             <h1>Маршрут без лишних горок</h1>
           </div>
           {(start || end) && (
-            <button className="text-button" onClick={reset}>Сбросить</button>
+            <button type="button" className="text-button" onClick={reset}>
+              Сбросить
+            </button>
           )}
         </header>
 
@@ -144,10 +146,11 @@ export default function Home() {
         </section>
 
         <section>
-          <label className="section-label">Режим</label>
+          <p className="section-label">Режим</p>
           <div className="mode-grid">
             {modes.map((item) => (
               <button
+                type="button"
                 key={item.id}
                 className={`mode-button ${mode === item.id ? "active" : ""}`}
                 onClick={() => setMode(item.id)}
@@ -161,7 +164,10 @@ export default function Home() {
 
         <section className="settings-grid">
           <label>
-            <span><b>Макс. крюк</b><output>{maxDetour}%</output></span>
+            <span>
+              <b>Макс. крюк</b>
+              <output>{maxDetour}%</output>
+            </span>
             <input
               type="range"
               min="0"
@@ -172,7 +178,10 @@ export default function Home() {
             />
           </label>
           <label>
-            <span><b>Комфортный уклон</b><output>{preferredGradient}%</output></span>
+            <span>
+              <b>Комфортный уклон</b>
+              <output>{preferredGradient}%</output>
+            </span>
             <input
               type="range"
               min="3"
@@ -195,6 +204,7 @@ export default function Home() {
             <div className="route-list">
               {routes.map((route, index) => (
                 <button
+                  type="button"
                   key={route.id}
                   className={`route-card ${selectedRoute?.id === route.id ? "selected" : ""}`}
                   onClick={() => setSelectedId(route.id)}
@@ -205,14 +215,28 @@ export default function Home() {
                     {recommended?.[mode] === route.id && <em>лучший</em>}
                   </div>
                   <div className="route-stats">
-                    <span><b>{formatDistance(route.distanceMeters)}</b><small>{formatDuration(route.durationSeconds)}</small></span>
-                    <span><b>{route.ascentMeters === null ? "—" : `+${Math.round(route.ascentMeters)} м`}</b><small>набор</small></span>
-                    <span><b>{route.typicalGradient === null ? "—" : `${route.typicalGradient.toFixed(1)}%`}</b><small>типичный</small></span>
-                    <span><b>{route.maxGradient === null ? "—" : `${route.maxGradient.toFixed(1)}%`}</b><small>макс.</small></span>
+                    <span>
+                      <b>{formatDistance(route.distanceMeters)}</b>
+                      <small>{formatDuration(route.durationSeconds)}</small>
+                    </span>
+                    <span>
+                      <b>{route.ascentMeters === null ? "—" : `+${Math.round(route.ascentMeters)} м`}</b>
+                      <small>набор</small>
+                    </span>
+                    <span>
+                      <b>{route.typicalGradient === null ? "—" : `${route.typicalGradient.toFixed(1)}%`}</b>
+                      <small>типичный</small>
+                    </span>
+                    <span>
+                      <b>{route.maxGradient === null ? "—" : `${route.maxGradient.toFixed(1)}%`}</b>
+                      <small>макс.</small>
+                    </span>
                   </div>
                   <div className="detour-row">
                     <span>Крюк {route.detourPercent.toFixed(0)}%</span>
-                    {route.steepDistanceMeters > 0 && <span>круто: {formatDistance(route.steepDistanceMeters)}</span>}
+                    {route.steepDistanceMeters > 0 && (
+                      <span>круто: {formatDistance(route.steepDistanceMeters)}</span>
+                    )}
                   </div>
                 </button>
               ))}
@@ -224,7 +248,10 @@ export default function Home() {
           <section className="profile-card">
             <div className="results-heading">
               <span className="section-label">Профиль высоты</span>
-              <small>{Math.round(Math.min(...selectedRoute.profile.map((p) => p.elevation)))}–{Math.round(Math.max(...selectedRoute.profile.map((p) => p.elevation)))} м</small>
+              <small>
+                {Math.round(Math.min(...selectedRoute.profile.map((p) => p.elevation)))}–
+                {Math.round(Math.max(...selectedRoute.profile.map((p) => p.elevation)))} м
+              </small>
             </div>
             <ElevationProfile points={selectedRoute.profile} />
           </section>

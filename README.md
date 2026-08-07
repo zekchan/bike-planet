@@ -34,11 +34,14 @@ Valhalla можно оставить в Docker, а Next.js запустить л
 
 ```bash
 docker compose up valhalla
-npm install
-npm run dev
+corepack enable
+pnpm install
+pnpm dev
 ```
 
 Локальный backend по умолчанию обращается к Valhalla на `http://localhost:8002`.
+
+Проект использует pnpm через Corepack, TypeScript 7 и Biome. Проверка форматирования и кода запускается командой `pnpm check`.
 
 ## Как выбирается маршрут
 

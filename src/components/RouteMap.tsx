@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import {
-  GeoJSONSource,
+  type GeoJSONSource,
   LngLatBounds,
   Map as MapLibreMap,
   Marker,
   NavigationControl,
   type StyleSpecification,
 } from "maplibre-gl";
+import { useEffect, useRef } from "react";
 import type { Point, RouteOption } from "@/app/page";
 
 type Props = {
@@ -49,8 +49,12 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
   const clickHandlerRef = useRef(onMapClick);
   const selectHandlerRef = useRef(onSelectRoute);
 
-  useEffect(() => { clickHandlerRef.current = onMapClick; }, [onMapClick]);
-  useEffect(() => { selectHandlerRef.current = onSelectRoute; }, [onSelectRoute]);
+  useEffect(() => {
+    clickHandlerRef.current = onMapClick;
+  }, [onMapClick]);
+  useEffect(() => {
+    selectHandlerRef.current = onSelectRoute;
+  }, [onSelectRoute]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -73,10 +77,18 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    markersRef.current.forEach((marker) => marker.remove());
+    markersRef.current.forEach((marker) => {
+      marker.remove();
+    });
     markersRef.current = [];
-    if (start) markersRef.current.push(new Marker({ element: markerElement("A", "a") }).setLngLat([start.lon, start.lat]).addTo(map));
-    if (end) markersRef.current.push(new Marker({ element: markerElement("B", "b") }).setLngLat([end.lon, end.lat]).addTo(map));
+    if (start)
+      markersRef.current.push(
+        new Marker({ element: markerElement("A", "a") }).setLngLat([start.lon, start.lat]).addTo(map),
+      );
+    if (end)
+      markersRef.current.push(
+        new Marker({ element: markerElement("B", "b") }).setLngLat([end.lon, end.lat]).addTo(map),
+      );
   }, [start, end]);
 
   useEffect(() => {
@@ -84,11 +96,15 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
     if (!map) return;
 
     const update = () => {
-      const data: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+      const data: Parameters<GeoJSONSource["setData"]>[0] = {
         type: "FeatureCollection",
         features: routes.map((route, index) => ({
           type: "Feature",
-          properties: { id: route.id, color: colors[index % colors.length], selected: route.id === selectedId ? 1 : 0 },
+          properties: {
+            id: route.id,
+            color: colors[index % colors.length],
+            selected: route.id === selectedId ? 1 : 0,
+          },
           geometry: { type: "LineString", coordinates: route.coordinates },
         })),
       };
@@ -119,13 +135,21 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
           const id = event.features?.[0]?.properties?.id;
           if (id) selectHandlerRef.current(id);
         });
-        map.on("mouseenter", "route-lines-hit", () => { map.getCanvas().style.cursor = "pointer"; });
-        map.on("mouseleave", "route-lines-hit", () => { map.getCanvas().style.cursor = "crosshair"; });
+        map.on("mouseenter", "route-lines-hit", () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", "route-lines-hit", () => {
+          map.getCanvas().style.cursor = "crosshair";
+        });
       }
 
       if (routes.length > 0) {
         const bounds = new LngLatBounds();
-        routes.forEach((route) => route.coordinates.forEach((coordinate) => bounds.extend(coordinate)));
+        routes.forEach((route) => {
+          route.coordinates.forEach((coordinate) => {
+            bounds.extend(coordinate);
+          });
+        });
         map.fitBounds(bounds, { padding: 70, duration: 600, maxZoom: 15 });
       }
     };

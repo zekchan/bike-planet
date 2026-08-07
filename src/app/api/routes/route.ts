@@ -73,7 +73,13 @@ async function requestJson<T>(path: string, body: unknown): Promise<T> {
 
 function elevationMetrics(profile: ProfilePoint[], preferredGradient: number) {
   if (profile.length < 2) {
-    return { ascentMeters: null, maxGradient: null, typicalGradient: null, steepDistanceMeters: 0, steepPenalty: 0 };
+    return {
+      ascentMeters: null,
+      maxGradient: null,
+      typicalGradient: null,
+      steepDistanceMeters: 0,
+      steepPenalty: 0,
+    };
   }
   let ascentMeters = 0;
   let steepDistanceMeters = 0;
@@ -97,31 +103,20 @@ function elevationMetrics(profile: ProfilePoint[], preferredGradient: number) {
   const typicalIndex = Math.floor((positiveGradients.length - 1) * 0.75);
   return {
     ascentMeters,
-    maxGradient: positiveGradients.length ? positiveGradients.at(-1)! : 0,
+    maxGradient: positiveGradients.at(-1) ?? 0,
     typicalGradient: positiveGradients.length ? positiveGradients[Math.max(0, typicalIndex)] : 0,
     steepDistanceMeters,
     steepPenalty,
   };
 }
 
-async function buildCandidate(
+async function enrichTrip(
   id: string,
   name: string,
-  useHills: number,
-  start: Point,
-  end: Point,
+  trip: ValhallaTrip,
   preferredGradient: number,
 ): Promise<Candidate> {
-  const route = await requestJson<{ trip: ValhallaTrip }>("/route", {
-    locations: [start, end],
-    costing: "bicycle",
-    costing_options: {
-      bicycle: { bicycle_type: "hybrid", use_hills: useHills, use_roads: 0.2 },
-    },
-    directions_options: { units: "kilometers" },
-  });
-
-  const encodedShape = route.trip.legs.map((leg) => leg.shape).join("");
+  const encodedShape = trip.legs[0].shape;
   let profile: ProfilePoint[] = [];
   try {
     const elevation = await requestJson<{ range_height?: [number, number | null][] }>("/height", {
@@ -143,19 +138,49 @@ async function buildCandidate(
     id,
     name,
     encodedShape,
-    coordinates: decodePolyline6(route.trip.legs[0].shape),
-    distanceMeters: route.trip.summary.length * 1000,
-    durationSeconds: route.trip.summary.time,
+    coordinates: decodePolyline6(encodedShape),
+    distanceMeters: trip.summary.length * 1000,
+    durationSeconds: trip.summary.time,
     detourPercent: 0,
     profile,
     ...metrics,
   };
 }
 
+async function buildCandidates(
+  id: string,
+  name: string,
+  useHills: number,
+  start: Point,
+  end: Point,
+  preferredGradient: number,
+): Promise<Candidate[]> {
+  const route = await requestJson<{ trip: ValhallaTrip; alternates?: { trip: ValhallaTrip }[] }>("/route", {
+    locations: [start, end],
+    costing: "bicycle",
+    alternates: 2,
+    costing_options: {
+      bicycle: { bicycle_type: "hybrid", use_hills: useHills, use_roads: 0.2 },
+    },
+    directions_options: { units: "kilometers" },
+  });
+  const trips = [route.trip, ...(route.alternates ?? []).map((alternate) => alternate.trip)];
+  return Promise.all(
+    trips.map((trip, index) =>
+      enrichTrip(`${id}-${index}`, index === 0 ? name : `${name} alt`, trip, preferredGradient),
+    ),
+  );
+}
+
 function isPoint(value: unknown): value is Point {
   if (!value || typeof value !== "object") return false;
   const point = value as Point;
-  return Number.isFinite(point.lat) && Number.isFinite(point.lon) && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;
+  return (
+    Number.isFinite(point.lat) &&
+    Number.isFinite(point.lon) &&
+    Math.abs(point.lat) <= 90 &&
+    Math.abs(point.lon) <= 180
+  );
 }
 
 export async function POST(request: Request) {
@@ -169,15 +194,18 @@ export async function POST(request: Request) {
     }
 
     const requests = [
-      buildCandidate("direct", "Direct", 0.65, start, end, preferredGradient),
-      buildCandidate("balanced", "Balanced", 0.25, start, end, preferredGradient),
-      buildCandidate("flattest", "Flattest", 0, start, end, preferredGradient),
+      buildCandidates("direct", "Direct", 0.65, start, end, preferredGradient),
+      buildCandidates("balanced", "Balanced", 0.25, start, end, preferredGradient),
+      buildCandidates("flattest", "Flattest", 0, start, end, preferredGradient),
     ];
     const settled = await Promise.allSettled(requests);
     const candidates = settled
-      .filter((result): result is PromiseFulfilledResult<Candidate> => result.status === "fulfilled")
-      .map((result) => result.value)
-      .filter((candidate, index, all) => all.findIndex((item) => item.encodedShape === candidate.encodedShape) === index);
+      .filter((result): result is PromiseFulfilledResult<Candidate[]> => result.status === "fulfilled")
+      .flatMap((result) => result.value)
+      .filter(
+        (candidate, index, all) =>
+          all.findIndex((item) => item.encodedShape === candidate.encodedShape) === index,
+      );
 
     if (!candidates.length) {
       const reason = settled.find((result) => result.status === "rejected");
@@ -194,21 +222,50 @@ export async function POST(request: Request) {
     });
 
     const byScore = (score: (candidate: Candidate) => number, pool = candidates) =>
-      [...pool].sort((a, b) => score(a) - score(b))[0].id;
+      [...pool].sort((a, b) => score(a) - score(b))[0];
     const allowed = candidates.filter((candidate) => candidate.detourPercent <= maxDetour + 0.01);
     const elevationAware = (candidate: Candidate, ascentWeight: number, steepWeight: number) =>
-      candidate.distanceMeters + (candidate.ascentMeters ?? 0) * ascentWeight + candidate.steepPenalty * steepWeight;
+      candidate.distanceMeters +
+      (candidate.ascentMeters ?? 0) * ascentWeight +
+      candidate.steepPenalty * steepWeight;
 
+    const direct = byScore((candidate) => candidate.distanceMeters);
+    const balanced = byScore((candidate) => elevationAware(candidate, 7, 0.02));
+    const flattest = byScore(
+      (candidate) =>
+        (candidate.ascentMeters ?? 0) * 100 + candidate.steepPenalty * 0.2 + candidate.distanceMeters * 0.05,
+      allowed.length ? allowed : candidates,
+    );
     const recommended = {
-      direct: byScore((candidate) => candidate.distanceMeters),
-      balanced: byScore((candidate) => elevationAware(candidate, 7, 0.02)),
-      flattest: byScore(
-        (candidate) => (candidate.ascentMeters ?? 0) * 100 + candidate.steepPenalty * 0.2 + candidate.distanceMeters * 0.05,
-        allowed.length ? allowed : candidates,
-      ),
+      direct: direct.id,
+      balanced: balanced.id,
+      flattest: flattest.id,
     };
 
-    const publicCandidates = candidates.map(({ encodedShape: _encodedShape, steepPenalty: _steepPenalty, ...candidate }) => candidate);
+    const visibleCandidates = [direct, balanced, flattest];
+    for (const candidate of [...candidates].sort(
+      (a, b) => elevationAware(a, 7, 0.02) - elevationAware(b, 7, 0.02),
+    )) {
+      if (!visibleCandidates.some((visible) => visible.id === candidate.id))
+        visibleCandidates.push(candidate);
+      if (new Set(visibleCandidates.map((visible) => visible.id)).size >= 3) break;
+    }
+    const uniqueVisible = visibleCandidates
+      .filter((candidate, index, all) => all.findIndex((item) => item.id === candidate.id) === index)
+      .slice(0, 3);
+    const publicCandidates = uniqueVisible.map(
+      ({ encodedShape: _encodedShape, steepPenalty: _steepPenalty, ...candidate }) => ({
+        ...candidate,
+        name:
+          candidate.id === direct.id
+            ? "Direct"
+            : candidate.id === balanced.id
+              ? "Balanced"
+              : candidate.id === flattest.id
+                ? "Flattest"
+                : "Alternative",
+      }),
+    );
     return NextResponse.json({ routes: publicCandidates, recommended });
   } catch (error) {
     console.error("Route API error", error);
