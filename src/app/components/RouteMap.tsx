@@ -36,8 +36,42 @@ const mapStyle: StyleSpecification = {
       tileSize: 256,
       attribution: "© OpenStreetMap contributors",
     },
+    routes: {
+      type: "geojson",
+      data: emptyRoutes,
+    },
   },
-  layers: [{ id: "osm", type: "raster", source: "osm" }],
+  layers: [
+    { id: "osm", type: "raster", source: "osm" },
+    {
+      id: "route-lines-casing",
+      type: "line",
+      source: "routes",
+      layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "selected"] },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": ["case", ["==", ["get", "selected"], 1], 9, 7],
+        "line-opacity": ["case", ["==", ["get", "selected"], 1], 0.9, 0.65],
+      },
+    },
+    {
+      id: "route-lines",
+      type: "line",
+      source: "routes",
+      layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "selected"] },
+      paint: {
+        "line-color": ["get", "color"],
+        "line-width": ["case", ["==", ["get", "selected"], 1], 6, 4],
+        "line-opacity": ["case", ["==", ["get", "selected"], 1], 1, 0.6],
+      },
+    },
+    {
+      id: "route-lines-hit",
+      type: "line",
+      source: "routes",
+      paint: { "line-color": "rgba(0,0,0,0)", "line-width": 18 },
+    },
+  ],
 };
 
 function markerElement(label: string, kind: "a" | "b") {
@@ -86,46 +120,15 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
       attributionControl: { compact: true },
     });
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
-    map.on("load", () => {
-      map.addSource("routes", { type: "geojson", data: emptyRoutes });
-      map.addLayer({
-        id: "route-lines-casing",
-        type: "line",
-        source: "routes",
-        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "selected"] },
-        paint: {
-          "line-color": "#ffffff",
-          "line-width": ["case", ["==", ["get", "selected"], 1], 9, 7],
-          "line-opacity": ["case", ["==", ["get", "selected"], 1], 0.9, 0.65],
-        },
-      });
-      map.addLayer({
-        id: "route-lines",
-        type: "line",
-        source: "routes",
-        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "selected"] },
-        paint: {
-          "line-color": ["get", "color"],
-          "line-width": ["case", ["==", ["get", "selected"], 1], 6, 4],
-          "line-opacity": ["case", ["==", ["get", "selected"], 1], 1, 0.6],
-        },
-      });
-      map.addLayer({
-        id: "route-lines-hit",
-        type: "line",
-        source: "routes",
-        paint: { "line-color": "rgba(0,0,0,0)", "line-width": 18 },
-      });
-      map.on("click", "route-lines-hit", (event) => {
-        const id = event.features?.[0]?.properties?.id;
-        if (id) selectHandlerRef.current(id);
-      });
-      map.on("mouseenter", "route-lines-hit", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "route-lines-hit", () => {
-        map.getCanvas().style.cursor = "crosshair";
-      });
+    map.on("click", "route-lines-hit", (event) => {
+      const id = event.features?.[0]?.properties?.id;
+      if (id) selectHandlerRef.current(id);
+    });
+    map.on("mouseenter", "route-lines-hit", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "route-lines-hit", () => {
+      map.getCanvas().style.cursor = "crosshair";
     });
     map.on("click", (event) => {
       const clickedRoute =
@@ -171,9 +174,9 @@ export function RouteMap({ start, end, routes, selectedId, onMapClick, onSelectR
       update();
       return;
     }
-    map.on("load", update);
+    map.on("style.load", update);
     return () => {
-      map.off("load", update);
+      map.off("style.load", update);
     };
   }, [routes, selectedId]);
 
